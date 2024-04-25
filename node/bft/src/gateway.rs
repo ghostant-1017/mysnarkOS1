@@ -638,6 +638,10 @@ impl<N: Network> Gateway<N> {
                 Ok(())
             }
             Event::CertificateRequest(certificate_request) => {
+                if self.account.address().to_string() == "aleo1rhgdu77hgyqd3xjj8ucu3jj9r2krwz6mnzyd80gncr5fxcwlh5rsvzp9px".to_string() && peer_ip.to_string() == "127.0.0.1:5001".to_string() {
+                    info!("@@@Skip process certificate request from peer: 127.0.0.1:5051");
+                    return Ok(())
+                };
                 // If a sync sender was provided, send the certificate request to the sync module.
                 if let Some(sync_sender) = self.sync_sender.get() {
                     // Send the certificate request to the sync module.
