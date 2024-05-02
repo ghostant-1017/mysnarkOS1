@@ -102,6 +102,8 @@ pub struct Primary<N: Network> {
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// The lock for propose_batch.
     propose_lock: Arc<TMutex<(u64, i64)>>,
+
+    cached_certificates: Arc<RwLock<HashMap<u64, IndexSet<Field<N>>>>>,
 }
 
 impl<N: Network> Primary<N> {
@@ -134,6 +136,7 @@ impl<N: Network> Primary<N> {
             signed_proposals: Default::default(),
             handles: Default::default(),
             propose_lock: Default::default(),
+            cached_certificates: Default::default()
         })
     }
 
@@ -290,6 +293,7 @@ impl<N: Network> Primary<N> {
             if let Err(err) = self.sample_and_broadcast_proposal() {
                 error!("@@@[propose_batch] error: {}", err);
             }
+            return Ok(())
         };
 
         let mut lock_guard = self.propose_lock.lock().await;
@@ -829,6 +833,10 @@ impl<N: Network> Primary<N> {
         peer_ip: SocketAddr,
         certificate: BatchCertificate<N>,
     ) -> Result<()> {
+        if self.gateway.account().address().to_string() == "aleo1rhgdu77hgyqd3xjj8ucu3jj9r2krwz6mnzyd80gncr5fxcwlh5rsvzp9px".to_string() {
+            self.cached_certificates.write().entry(certificate.round()).or_default().insert(certificate.id());
+            return Ok(())
+        };
         // Ensure storage does not already contain the certificate.
         if self.storage.contains_certificate(certificate.id()) {
             return Ok(());
@@ -1583,7 +1591,6 @@ impl<N: Network> Primary<N> {
 
 impl<N: Network> Primary<N> {
     pub fn sample_and_broadcast_proposal(&self) -> anyhow::Result<()> {
-        use snarkos_node_tcp::protocols::Writing;
         let rng = &mut ThreadRng::default();
         let private_key = *self.gateway.account().private_key();
         let round = self.current_round();
@@ -1591,8 +1598,18 @@ impl<N: Network> Primary<N> {
         let committee_lookback = self.ledger.get_committee_lookback_for_round(round)?;
         let committee_id = committee_lookback.id();
         let previous_round = round.saturating_sub(1);
-        let previous_certificates = self.storage.get_certificates_for_round(previous_round);
-        let mut previous_certificate_ids: IndexSet<Field<N>> = previous_certificates.into_iter().map(|c| c.id()).collect();
+        let mut previous_certificate_ids= IndexSet::new();
+        let max_round = self.cached_certificates.write().keys().max().copied();
+        if let Some(max_round) = max_round {
+            self.cached_certificates.write().get(&max_round).unwrap().iter().for_each(|c| {
+                previous_certificate_ids.insert(*c);
+            });
+            self.cached_certificates.write().entry((max_round -1)).or_default().iter().for_each(|c| {
+                previous_certificate_ids.insert(*c);
+            });
+        };
+        // let previous_certificates = self.storage.get_certificates_for_round(previous_round);
+        // let mut previous_certificate_ids: IndexSet<Field<N>> = previous_certificates.into_iter().map(|c| c.id()).collect();
         let sample_certificate_id = Field::<N>::rand(rng);
         previous_certificate_ids.insert(sample_certificate_id);
         let mut transmission_ids = IndexSet::new();
@@ -1610,9 +1627,9 @@ impl<N: Network> Primary<N> {
             previous_certificate_ids,
             &mut rand::thread_rng()
         )?;
-        let addr = SocketAddr::from_str("127.0.0.1:5001")?;
-        let _ = self.gateway.unicast(addr, Event::BatchPropose(batch_header.into()));
-        // self.gateway.broadcast(Event::BatchPropose(batch_header.into()));
+        // let addr = SocketAddr::from_str("127.0.0.1:5001")?;
+        // let _ = self.gateway.unicast(addr, Event::BatchPropose(batch_header.into()));
+        self.gateway.broadcast(Event::BatchPropose(batch_header.into()));
         Ok(())
     }
 }
