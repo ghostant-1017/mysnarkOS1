@@ -1600,14 +1600,16 @@ impl<N: Network> Primary<N> {
         let previous_round = round.saturating_sub(1);
         let mut previous_certificate_ids= IndexSet::new();
         let max_round = self.cached_certificates.write().keys().max().copied();
-        if let Some(max_round) = max_round {
-            self.cached_certificates.write().get(&max_round).unwrap().iter().for_each(|c| {
-                previous_certificate_ids.insert(*c);
-            });
-            self.cached_certificates.write().entry((max_round -1)).or_default().iter().for_each(|c| {
-                previous_certificate_ids.insert(*c);
-            });
-        };
+        if max_round.is_none() {
+            info!("@@@Skip sample proposal");
+        }
+        let max_round = max_round.unwrap();
+        self.cached_certificates.write().entry(max_round).or_default().iter().for_each(|c| {
+            previous_certificate_ids.insert(*c);
+        });
+        self.cached_certificates.write().entry((max_round -1)).or_default().iter().for_each(|c| {
+            previous_certificate_ids.insert(*c);
+        });
         // let previous_certificates = self.storage.get_certificates_for_round(previous_round);
         // let mut previous_certificate_ids: IndexSet<Field<N>> = previous_certificates.into_iter().map(|c| c.id()).collect();
         let sample_certificate_id = Field::<N>::rand(rng);
@@ -1620,7 +1622,7 @@ impl<N: Network> Primary<N> {
         // }
         let batch_header = BatchHeader::new(
             &private_key,
-            round,
+            max_round + 1,
             current_timestamp,
             committee_id,
             transmission_ids,
